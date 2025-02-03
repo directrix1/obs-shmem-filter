@@ -16,7 +16,6 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include "media-io/video-io.h"
 #include "obs.h"
 #include "util/c99defs.h"
 #include <obs-module.h>
@@ -26,8 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 struct srb_filter_data {
 	obs_source_t *source;
 	obs_source_t *parent;
-	obs_view_t *view;
-	video_t *video;
+	gs_texrender_t *texrender;
+	gs_stagesurf_t *stagesurface;
 	int connected;
 	SRBHandle srbh;
 	struct ShmRingBuffer *video_srb;
@@ -53,20 +52,20 @@ static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
 	struct srb_filter_data *d = bzalloc(sizeof(struct srb_filter_data));
 	d->source = source;
 	d->parent = NULL;
-	d->view = NULL;
-	d->video = NULL;
+	d->srbh = srb_client_new("/srb_video_test");
+	if (d->srbh) {
+		d->video_srb =
+			srb_get_ring_by_description(d->srbh, "video_frames");
+		if (!d->video_srb) {
+			obs_log(LOG_WARNING, "Could not find srb.\n");
+		}
+	} else {
+		obs_log(LOG_WARNING, "Could not connect to srb shmem.\n");
+	}
 	return d;
 }
 
-static void srb_video_frame(void *param, struct video_data *frame)
-{
-	printf("\n\nB\n\n");
-	// va_list args = {frame->linesize[0]};
-	// blogva(LOG_INFO, "Captured frame of %d\n", args);
-	UNUSED_PARAMETER(param);
-	UNUSED_PARAMETER(frame);
-}
-
+/*
 static void srb_video_tick(void *data, float seconds)
 {
 	struct srb_filter_data *d = data;
@@ -75,52 +74,85 @@ static void srb_video_tick(void *data, float seconds)
 		d->parent = obs_filter_get_parent(d->source);
 	}
 
-	if (d->view == NULL && d->parent) {
-		printf("\n\nAAA\n\n");
-		d->view = obs_view_create();
-		printf("\n\nA\n\n");
-
-		obs_view_set_source(d->view, 0, d->parent);
-		printf("\n\nA\n\n");
-
-		/*
-		struct obs_video_info ovi;
-		ovi.base_width = ovi.output_width = 1920;
-		ovi.base_height = ovi.output_height = 1080;
-		ovi.output_format = VIDEO_FORMAT_BGRA;
-		*/
-		d->video = obs_view_add2(d->view, NULL);
-		printf("\n\nA\n\n");
-
-		/*
-		const struct video_scale_info conversion = {
-			.width = 1920,
-			.height = 1080,
-			//.format = VIDEO_FORMAT_RGBA,
-			//.range = VIDEO_RANGE_FULL,
-			//.colorspace = VIDEO_CS_DEFAULT,
-		};
-		*/
-		if (video_output_connect(d->video, NULL, srb_video_frame, d)) {
-			printf("\n\nA\n\n");
-			obs_log(LOG_INFO, "Connected SRB video output.");
-		} else {
-			printf("\n\nA\n\n");
-			obs_log(LOG_INFO,
-				"Could not connect SRB video output.");
-		}
+	if (d->parent == NULL) {
+		return;
 	}
 
+	struct obs_source_frame *frame = obs_source_get_frame(d->source);
+	if (!frame) {
+		obs_log(LOG_WARNING, "Frame not returned\n");
+		return;
+	} else {
+		obs_log(LOG_WARNING, "Frame got'd\n");
+	}
+
+	if (frame->format != VIDEO_FORMAT_RGBA) {
+		obs_log(LOG_WARNING, "Not RGBA!\n");
+		obs_source_release_frame(d->parent, frame);
+		return;
+	}
+
+	// TODO: copy into shared buffer
+
+	obs_source_release_frame(d->parent, frame);
 	UNUSED_PARAMETER(seconds);
 }
+*/
 
-/*
 static void srb_filter_render(void *data, gs_effect_t *effect)
 {
 	struct srb_filter_data *d = data;
+	uint8_t *dest_buf;
 
 	if (d->parent == NULL) {
 		d->parent = obs_filter_get_parent(d->source);
+		dest_buf = srb_producer_first_write_buffer(d->video_srb);
+	} else {
+		dest_buf = srb_producer_next_write_buffer(d->video_srb);
+	}
+
+	uint32_t width = obs_source_get_base_width(d->parent);
+	uint32_t height = obs_source_get_base_height(d->parent);
+	size_t frame_size = width * height * 4; // RGBA = 4 bytes per pixel
+	if (width == 0 || height == 0) {
+		obs_log(LOG_WARNING, "Invalid source dimensions.");
+		return;
+	}
+
+	// Create texture render and staging surface if not already created
+	if (!d->texrender) {
+		d->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	}
+	if (!d->stagesurface) {
+		d->stagesurface =
+			gs_stagesurface_create(width, height, GS_RGBA);
+	}
+	if (!d->texrender || !d->stagesurface) {
+		obs_log(LOG_ERROR,
+			"Failed to create texrender or stagesurface.");
+		return;
+	}
+
+	// Render scene to texture
+	gs_texrender_reset(d->texrender);
+	gs_begin_scene();
+	obs_source_video_render(d->parent);
+	gs_end_scene();
+
+	// Copy rendered frame to a staging surface
+	gs_texture_t *texture = gs_texrender_get_texture(d->texrender);
+	if (texture) {
+		gs_stage_texture(d->stagesurface, texture);
+	}
+
+	// Map the staging surface and copy the data to RAM
+	uint8_t *mapped_pixels;
+	uint32_t linesize;
+	if (gs_stagesurface_map(d->stagesurface, &mapped_pixels, &linesize)) {
+		memcpy(dest_buf, mapped_pixels, frame_size); // Copy data to RAM
+		gs_stagesurface_unmap(d->stagesurface);
+	} else {
+		obs_log(LOG_WARNING, "Failed to map staging surface.");
 	}
 
 	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
@@ -132,7 +164,6 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 
 	UNUSED_PARAMETER(effect);
 }
-*/
 
 struct obs_source_info srb_filter = {
 	.id = "srb_filter",
@@ -141,6 +172,6 @@ struct obs_source_info srb_filter = {
 	.get_name = srb_filter_get_name,
 	.create = srb_filter_create,
 	.destroy = srb_filter_destroy,
-	.video_tick = srb_video_tick,
-	//.video_render = srb_filter_render,
+	.video_render = srb_filter_render,
+	//.video_tick = srb_video_tick,
 };
