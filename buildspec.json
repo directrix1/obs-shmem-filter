@@ -33,16 +33,18 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.obs-plugintemplate"
+            "bundleId": "com.directrix1.obs-srb"
         }
     },
-    "name": "obs-plugintemplate",
-    "displayName": "OBS Plugin Template",
+    "name": "obs-srb",
+    "displayName": "OBS Shared-memory Ring Buffer Tools",
     "version": "1.0.0",
-    "author": "Your Name Here",
-    "website": "https://example.com",
-    "email": "me@example.com",
+    "author": "Edward Flick",
+    "website": "https://github.com/directrix1/obs-shmem-filter",
+    "email": "directrix1+obsshmemfilter@gmail.com",
     "uuids": {
-        "windowsApp": "00000000-0000-0000-0000-000000000000"
+        "windowsApp": "a19745c8-2c39-4693-8849-4cf4020d215c",
+        "macosPackage": "6156bd0c-005f-4250-a093-3837079cba12",
+        "macosInstaller": "7ed05852-0d45-442a-9888-db60a77d59b9"
     }
 }
