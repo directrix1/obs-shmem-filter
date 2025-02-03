@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include "graphics/graphics.h"
 #include "obs.h"
 #include "util/c99defs.h"
 #include <obs-module.h>
@@ -123,9 +124,17 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 		obs_log(LOG_ERROR, "No parent?");
 	}
 
+	if (!gs_get_context()) {
+		obs_log(LOG_INFO, "Before not in graphics context.");
+	}
+
 	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
 					     OBS_ALLOW_DIRECT_RENDERING))
 		return;
+
+	if (!gs_get_context()) {
+		obs_log(LOG_INFO, "Between not in graphics context.");
+	}
 
 	uint32_t width = obs_source_get_base_width(d->parent);
 	uint32_t height = obs_source_get_base_height(d->parent);
@@ -151,14 +160,23 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 
 	// Render scene to texture
 	gs_texrender_reset(d->texrender);
-	gs_begin_scene();
+	if (!gs_texrender_begin(d->texrender, width, height)) {
+		obs_log(LOG_ERROR, "Failed to begin texrender.");
+		return;
+	}
+
+	const struct vec4 blackclear = {0, 0, 0, 0};
+	gs_clear(GS_CLEAR_COLOR | GS_CLEAR_DEPTH, &blackclear, 1.0f, 0);
 	obs_source_video_render(d->parent);
-	gs_end_scene();
+
+	gs_texrender_end(d->texrender);
 
 	// Copy rendered frame to a staging surface
 	gs_texture_t *texture = gs_texrender_get_texture(d->texrender);
 	if (texture) {
 		gs_stage_texture(d->stagesurface, texture);
+	} else {
+		obs_log(LOG_WARNING, "Texture not returned from texrender.");
 	}
 
 	// Map the staging surface and copy the data to RAM
@@ -173,6 +191,10 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 
 	obs_source_process_filter_end(
 		d->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0);
+
+	if (!gs_get_context()) {
+		obs_log(LOG_INFO, "After not in graphics context.");
+	}
 
 	UNUSED_PARAMETER(effect);
 }
