@@ -52,6 +52,8 @@ static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
 	struct srb_filter_data *d = bzalloc(sizeof(struct srb_filter_data));
 	d->source = source;
 	d->parent = NULL;
+	d->texrender = NULL;
+	d->stagesurface = NULL;
 	d->srbh = srb_client_new("/srb_video_test");
 	if (d->srbh) {
 		d->video_srb =
@@ -103,13 +105,27 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 {
 	struct srb_filter_data *d = data;
 	uint8_t *dest_buf;
+	if (!d->source) {
+		obs_log(LOG_ERROR, "Source not set!");
+		return;
+	}
 
 	if (d->parent == NULL) {
 		d->parent = obs_filter_get_parent(d->source);
 		dest_buf = srb_producer_first_write_buffer(d->video_srb);
+		obs_log(LOG_INFO, "Parent:");
+		obs_log(LOG_INFO, obs_source_get_name(d->parent));
 	} else {
 		dest_buf = srb_producer_next_write_buffer(d->video_srb);
 	}
+
+	if (!d->parent) {
+		obs_log(LOG_ERROR, "No parent?");
+	}
+
+	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
+					     OBS_ALLOW_DIRECT_RENDERING))
+		return;
 
 	uint32_t width = obs_source_get_base_width(d->parent);
 	uint32_t height = obs_source_get_base_height(d->parent);
@@ -154,10 +170,6 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 	} else {
 		obs_log(LOG_WARNING, "Failed to map staging surface.");
 	}
-
-	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
-					     OBS_ALLOW_DIRECT_RENDERING))
-		return;
 
 	obs_source_process_filter_end(
 		d->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0);
