@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "graphics/graphics.h"
+#include "obs-properties.h"
 #include "obs.h"
 #include "util/c99defs.h"
 #include <obs-module.h>
@@ -28,7 +29,7 @@ struct srb_filter_data {
 	obs_source_t *parent;
 	gs_texrender_t *texrender;
 	gs_stagesurf_t *stagesurface;
-	int connected;
+	obs_data_t *settings;
 	SRBHandle srbh;
 	struct ShmRingBuffer *video_srb;
 };
@@ -42,9 +43,45 @@ static const char *srb_filter_get_name(void *unused)
 static void srb_filter_destroy(void *data)
 {
 	struct srb_filter_data *d = data;
+	if (d->srbh) {
+		srb_close(d->srbh);
+		d->srbh = NULL;
+		d->video_srb = NULL;
+	}
 	if (d) {
 		bfree(d);
 	}
+}
+
+static bool srb_filter_connect(void *data)
+{
+	struct srb_filter_data *d = data;
+	if (d->srbh) {
+		obs_log(LOG_INFO, "Closing existing srb channel.");
+		srb_close(d->srbh);
+		d->srbh = NULL;
+		d->video_srb = NULL;
+	}
+
+	char *shmname = (char *)obs_data_get_string(d->settings, "shmname");
+	char *ringbuffer =
+		(char *)obs_data_get_string(d->settings, "ringbuffer");
+	obs_log(LOG_INFO, "Connecting to SRB:");
+	obs_log(LOG_INFO, shmname);
+	obs_log(LOG_INFO, "... Ring Buffer:");
+	obs_log(LOG_INFO, ringbuffer);
+	d->srbh = srb_client_new(shmname);
+	if (d->srbh) {
+		d->video_srb = srb_get_ring_by_description(d->srbh, ringbuffer);
+		if (!d->video_srb) {
+			obs_log(LOG_WARNING, "Could not find srb.\n");
+			return false;
+		}
+	} else {
+		obs_log(LOG_WARNING, "Could not connect to srb shmem.\n");
+		return false;
+	}
+	return true;
 }
 
 static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
@@ -55,57 +92,28 @@ static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
 	d->parent = NULL;
 	d->texrender = NULL;
 	d->stagesurface = NULL;
-	d->srbh = srb_client_new("/srb_video_test");
-	if (d->srbh) {
-		d->video_srb =
-			srb_get_ring_by_description(d->srbh, "video_frames");
-		if (!d->video_srb) {
-			obs_log(LOG_WARNING, "Could not find srb.\n");
-		}
-	} else {
-		obs_log(LOG_WARNING, "Could not connect to srb shmem.\n");
-	}
+	d->srbh = NULL;
+	d->video_srb = NULL;
+	d->settings = settings;
+	srb_filter_connect(d);
 	return d;
 }
-
-/*
-static void srb_video_tick(void *data, float seconds)
-{
-	struct srb_filter_data *d = data;
-
-	if (d->parent == NULL) {
-		d->parent = obs_filter_get_parent(d->source);
-	}
-
-	if (d->parent == NULL) {
-		return;
-	}
-
-	struct obs_source_frame *frame = obs_source_get_frame(d->source);
-	if (!frame) {
-		obs_log(LOG_WARNING, "Frame not returned\n");
-		return;
-	} else {
-		obs_log(LOG_WARNING, "Frame got'd\n");
-	}
-
-	if (frame->format != VIDEO_FORMAT_RGBA) {
-		obs_log(LOG_WARNING, "Not RGBA!\n");
-		obs_source_release_frame(d->parent, frame);
-		return;
-	}
-
-	// TODO: copy into shared buffer
-
-	obs_source_release_frame(d->parent, frame);
-	UNUSED_PARAMETER(seconds);
-}
-*/
 
 static void srb_filter_render(void *data, gs_effect_t *effect)
 {
 	struct srb_filter_data *d = data;
-	uint8_t *dest_buf;
+
+	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
+					     OBS_ALLOW_DIRECT_RENDERING))
+		return;
+
+	obs_source_process_filter_end(
+		d->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0);
+
+	if (!d->video_srb) {
+		return;
+	}
+
 	if (!d->source) {
 		obs_log(LOG_ERROR, "Source not set!");
 		return;
@@ -113,27 +121,14 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 
 	if (d->parent == NULL) {
 		d->parent = obs_filter_get_parent(d->source);
-		dest_buf = srb_producer_first_write_buffer(d->video_srb);
 		obs_log(LOG_INFO, "Parent:");
 		obs_log(LOG_INFO, obs_source_get_name(d->parent));
-	} else {
-		dest_buf = srb_producer_next_write_buffer(d->video_srb);
 	}
+
+	uint8_t *dest_buf = srb_producer_next_write_buffer(d->video_srb);
 
 	if (!d->parent) {
 		obs_log(LOG_ERROR, "No parent?");
-	}
-
-	if (!gs_get_context()) {
-		obs_log(LOG_INFO, "Before not in graphics context.");
-	}
-
-	if (!obs_source_process_filter_begin(d->source, GS_RGBA,
-					     OBS_ALLOW_DIRECT_RENDERING))
-		return;
-
-	if (!gs_get_context()) {
-		obs_log(LOG_INFO, "Between not in graphics context.");
 	}
 
 	uint32_t width = obs_source_get_base_width(d->parent);
@@ -189,14 +184,39 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 		obs_log(LOG_WARNING, "Failed to map staging surface.");
 	}
 
-	obs_source_process_filter_end(
-		d->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0);
-
-	if (!gs_get_context()) {
-		obs_log(LOG_INFO, "After not in graphics context.");
-	}
-
 	UNUSED_PARAMETER(effect);
+}
+
+static bool srb_filter_connect_clicked(obs_properties_t *props,
+				       obs_property_t *property, void *data)
+{
+	return srb_filter_connect(data);
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
+}
+
+static obs_properties_t *srb_filter_get_properties(void *data)
+{
+	obs_properties_t *props = obs_properties_create();
+	obs_properties_add_text(props, "shmname", "Shared Memory Name",
+				OBS_TEXT_DEFAULT);
+	obs_properties_add_text(props, "ringbuffer", "Ring Buffer Name",
+				OBS_TEXT_DEFAULT);
+	obs_properties_add_button2(props, "connect", "Connect",
+				   srb_filter_connect_clicked, data);
+	return props;
+}
+
+static void srb_filter_get_defaults(obs_data_t *settings)
+{
+	obs_data_set_default_string(settings, "shmname", "/obs_video");
+	obs_data_set_default_string(settings, "ringbuffer", "video_frames");
+}
+
+static void srb_filter_update(void *data, obs_data_t *settings)
+{
+	struct srb_filter_data *d = data;
+	d->settings = settings;
 }
 
 struct obs_source_info srb_filter = {
@@ -207,5 +227,7 @@ struct obs_source_info srb_filter = {
 	.create = srb_filter_create,
 	.destroy = srb_filter_destroy,
 	.video_render = srb_filter_render,
-	//.video_tick = srb_video_tick,
+	.get_defaults = srb_filter_get_defaults,
+	.get_properties = srb_filter_get_properties,
+	.update = srb_filter_update,
 };
