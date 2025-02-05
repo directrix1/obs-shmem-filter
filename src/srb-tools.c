@@ -110,7 +110,7 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 	obs_source_process_filter_end(
 		d->source, obs_get_base_effect(OBS_EFFECT_DEFAULT), 0, 0);
 
-	if (!d->video_srb) {
+	if (!d->video_srb || !obs_source_enabled(d->source)) {
 		return;
 	}
 
@@ -119,13 +119,11 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
-	if (d->parent == NULL) {
+	if (!d->parent) {
 		d->parent = obs_filter_get_parent(d->source);
 		obs_log(LOG_INFO, "Parent:");
 		obs_log(LOG_INFO, obs_source_get_name(d->parent));
 	}
-
-	uint8_t *dest_buf = srb_producer_next_write_buffer(d->video_srb);
 
 	if (!d->parent) {
 		obs_log(LOG_ERROR, "No parent?");
@@ -133,6 +131,9 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 
 	uint32_t width = obs_source_get_base_width(d->parent);
 	uint32_t height = obs_source_get_base_height(d->parent);
+
+	uint8_t *dest_buf = srb_producer_next_write_buffer(d->video_srb);
+
 	size_t frame_size = width * height * 4; // RGBA = 4 bytes per pixel
 	if (width == 0 || height == 0) {
 		obs_log(LOG_WARNING, "Invalid source dimensions.");
@@ -187,6 +188,16 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 	UNUSED_PARAMETER(effect);
 }
 
+static void srb_filter_tick(void *data, float seconds)
+{
+	struct srb_filter_data *d = data;
+	if (!d->video_srb) {
+		return;
+	}
+
+	UNUSED_PARAMETER(seconds);
+}
+
 static bool srb_filter_connect_clicked(obs_properties_t *props,
 				       obs_property_t *property, void *data)
 {
@@ -227,6 +238,7 @@ struct obs_source_info srb_filter = {
 	.create = srb_filter_create,
 	.destroy = srb_filter_destroy,
 	.video_render = srb_filter_render,
+	.video_tick = srb_filter_tick,
 	.get_defaults = srb_filter_get_defaults,
 	.get_properties = srb_filter_get_properties,
 	.update = srb_filter_update,
