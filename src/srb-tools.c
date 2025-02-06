@@ -17,6 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "graphics/graphics.h"
+#include "media-io/video-io.h"
 #include "obs-properties.h"
 #include "obs.h"
 #include "util/c99defs.h"
@@ -30,6 +31,7 @@ struct srb_filter_data {
 	gs_texrender_t *texrender;
 	gs_stagesurf_t *stagesurface;
 	obs_data_t *settings;
+	obs_properties_t *props;
 	obs_view_t *view;
 	video_t *video;
 	bool active;
@@ -43,20 +45,7 @@ static const char *srb_filter_get_name(void *unused)
 	return "SRB Output Filter";
 }
 
-static void srb_filter_destroy(void *data)
-{
-	struct srb_filter_data *d = data;
-	if (d->srbh) {
-		srb_close(d->srbh);
-		d->srbh = NULL;
-		d->video_srb = NULL;
-	}
-	if (d) {
-		bfree(d);
-	}
-}
-
-static bool srb_filter_connect(void *data)
+static void srb_filter_disconnect(void *data)
 {
 	struct srb_filter_data *d = data;
 	if (d->srbh) {
@@ -65,6 +54,15 @@ static bool srb_filter_connect(void *data)
 		d->srbh = NULL;
 		d->video_srb = NULL;
 	}
+	obs_data_set_string(d->settings, "status", "Disconnected.");
+	obs_data_set_bool(d->settings, "active", false);
+	d->active = false;
+}
+
+static bool srb_filter_connect(void *data)
+{
+	struct srb_filter_data *d = data;
+	srb_filter_disconnect(data);
 
 	char *shmname = (char *)obs_data_get_string(d->settings, "shmname");
 	char *ringbuffer =
@@ -77,14 +75,49 @@ static bool srb_filter_connect(void *data)
 	if (d->srbh) {
 		d->video_srb = srb_get_ring_by_description(d->srbh, ringbuffer);
 		if (!d->video_srb) {
-			obs_log(LOG_WARNING, "Could not find srb.\n");
+			srb_close(d->srbh);
+			d->srbh = NULL;
+			obs_log(LOG_WARNING, "Could not find srb.");
+			obs_data_set_string(
+				d->settings, "status",
+				"Error: Could not find specified Ring Buffer.");
+			obs_data_set_bool(d->settings, "active", false);
+			d->active = false;
 			return false;
 		}
 	} else {
-		obs_log(LOG_WARNING, "Could not connect to srb shmem.\n");
+		obs_log(LOG_WARNING, "Could not connect to srb shmem.");
+		obs_data_set_string(
+			d->settings, "status",
+			"Error: Could not connect to specified Shared Memory.");
+		obs_data_set_bool(d->settings, "active", false);
+		d->active = false;
 		return false;
 	}
+	obs_log(LOG_INFO, "Connected");
+	obs_data_set_string(d->settings, "status", "Connected.");
+	obs_data_set_bool(d->settings, "active", true);
+	d->active = true;
 	return true;
+}
+
+static void srb_filter_destroy(void *data)
+{
+	struct srb_filter_data *d = data;
+	if (d) {
+		srb_filter_disconnect(d);
+		if (d->view) {
+			obs_source_dec_showing(d->parent);
+			obs_view_set_source(d->view, 0, NULL);
+			obs_view_remove(d->view);
+			d->view = NULL;
+			d->video = NULL;
+		}
+		// if (d->props) {
+		// 	obs_properties_destroy(d->props);
+		// }
+		bfree(d);
+	}
 }
 
 static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
@@ -97,11 +130,13 @@ static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
 	d->stagesurface = NULL;
 	d->view = NULL;
 	d->video = NULL;
-	d->active = true;
+	d->active = false;
 	d->srbh = NULL;
 	d->video_srb = NULL;
 	d->settings = settings;
-	srb_filter_connect(d);
+	if (obs_data_get_bool(settings, "active")) {
+		srb_filter_connect(d);
+	}
 	return d;
 }
 
@@ -194,6 +229,13 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 	UNUSED_PARAMETER(effect);
 }
 
+static void srb_filter_raw_frame(void *data, struct video_data *frame)
+{
+	obs_log(LOG_INFO, "raw frame received");
+	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(frame);
+}
+
 static void srb_filter_tick(void *data, float seconds)
 {
 	struct srb_filter_data *d = data;
@@ -218,36 +260,53 @@ static void srb_filter_tick(void *data, float seconds)
 				return;
 			}
 			// Not using this render anyway
-			ovi.base_width = ovi.output_width = ovi.base_height =
-				ovi.output_height = 2;
+			ovi.base_width = ovi.output_width = 2;
+			ovi.base_height = ovi.output_height = 2;
+
+			// ovi.base_width = ovi.output_width =
+			// 	obs_source_get_base_width(d->parent);
+			// ovi.base_height = ovi.output_height =
+			// 	obs_source_get_base_height(d->parent);
+
+			obs_log(LOG_INFO, "Video format: %d",
+				ovi.output_format);
 			d->video = obs_view_add2(d->view, &ovi);
 			if (!d->video) {
 				obs_log(LOG_ERROR,
 					"Could not add video to view!");
+				return;
 			}
+			// const struct video_scale_info vsi = {
+			// 	.colorspace = VIDEO_CS_DEFAULT,
+			// 	.format = VIDEO_FORMAT_RGBA,
+			// 	.range = VIDEO_RANGE_DEFAULT,
+			// 	.width = ovi.base_width,
+			// 	.height = ovi.base_height,
+			// };
+			// if (!video_output_connect(d->video, &vsi,
+			// 			  srb_filter_raw_frame, data)) {
+			// 	obs_log(LOG_INFO, "video output not connected");
+			// }
+			// obs_log(LOG_INFO, "connected video output");
 		}
 	}
 
 	UNUSED_PARAMETER(seconds);
 }
 
-static bool srb_filter_connect_clicked(obs_properties_t *props,
-				       obs_property_t *property, void *data)
-{
-	return srb_filter_connect(data);
-	UNUSED_PARAMETER(props);
-	UNUSED_PARAMETER(property);
-}
-
 static obs_properties_t *srb_filter_get_properties(void *data)
 {
+	struct srb_filter_data *d = data;
 	obs_properties_t *props = obs_properties_create();
 	obs_properties_add_text(props, "shmname", "Shared Memory Name",
 				OBS_TEXT_DEFAULT);
 	obs_properties_add_text(props, "ringbuffer", "Ring Buffer Name",
 				OBS_TEXT_DEFAULT);
-	obs_properties_add_button2(props, "connect", "Connect",
-				   srb_filter_connect_clicked, data);
+	obs_properties_add_bool(props, "active", "Active");
+	obs_properties_add_text(props, "status", "Status", OBS_TEXT_INFO);
+	if (d) {
+		d->props = props;
+	}
 	return props;
 }
 
@@ -255,12 +314,26 @@ static void srb_filter_get_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, "shmname", "/obs_video");
 	obs_data_set_default_string(settings, "ringbuffer", "video_frames");
+	obs_data_set_default_bool(settings, "active", false);
+	obs_data_set_default_string(settings, "status", "Disconnected.");
 }
 
 static void srb_filter_update(void *data, obs_data_t *settings)
 {
+	obs_log(LOG_INFO, "filter update!");
 	struct srb_filter_data *d = data;
 	d->settings = settings;
+	bool active = obs_data_get_bool(settings, "active");
+	obs_log(LOG_INFO, "active: %d, dactive: %d", active, d->active);
+	if (active != d->active) {
+		if (active) {
+			srb_filter_connect(data);
+		} else {
+			srb_filter_disconnect(data);
+		}
+	}
+
+	obs_properties_apply_settings(d->props, settings);
 }
 
 struct obs_source_info srb_filter = {
