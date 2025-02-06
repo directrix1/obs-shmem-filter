@@ -30,6 +30,9 @@ struct srb_filter_data {
 	gs_texrender_t *texrender;
 	gs_stagesurf_t *stagesurface;
 	obs_data_t *settings;
+	obs_view_t *view;
+	video_t *video;
+	bool active;
 	SRBHandle srbh;
 	struct ShmRingBuffer *video_srb;
 };
@@ -92,6 +95,9 @@ static void *srb_filter_create(obs_data_t *settings, obs_source_t *source)
 	d->parent = NULL;
 	d->texrender = NULL;
 	d->stagesurface = NULL;
+	d->view = NULL;
+	d->video = NULL;
+	d->active = true;
 	d->srbh = NULL;
 	d->video_srb = NULL;
 	d->settings = settings;
@@ -191,8 +197,35 @@ static void srb_filter_render(void *data, gs_effect_t *effect)
 static void srb_filter_tick(void *data, float seconds)
 {
 	struct srb_filter_data *d = data;
-	if (!d->video_srb) {
+	if (!d->video_srb || !d->source || !d->parent) {
 		return;
+	}
+
+	if (d->active) {
+		if (!obs_source_showing(d->parent))
+			return;
+
+		if (!d->view) {
+			d->view = obs_view_create();
+			obs_view_set_source(d->view, 0, d->parent);
+			obs_source_inc_showing(d->parent);
+		}
+
+		if (!d->video) {
+			struct obs_video_info ovi;
+			if (!obs_get_video_info(&ovi)) {
+				obs_log(LOG_ERROR, "Could not get video info!");
+				return;
+			}
+			// Not using this render anyway
+			ovi.base_width = ovi.output_width = ovi.base_height =
+				ovi.output_height = 2;
+			d->video = obs_view_add2(d->view, &ovi);
+			if (!d->video) {
+				obs_log(LOG_ERROR,
+					"Could not add video to view!");
+			}
+		}
 	}
 
 	UNUSED_PARAMETER(seconds);
