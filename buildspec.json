@@ -33,15 +33,15 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.directrix1.obs-srb"
+            "bundleId": "com.directrix1.obs-shmem-ringbuffer"
         }
     },
-    "name": "obs-srb",
+    "name": "obs-shmem-ringbuffer",
     "displayName": "OBS Shared-memory Ring Buffer Tools",
     "version": "1.0.0",
     "author": "Edward Flick",
-    "website": "https://github.com/directrix1/obs-shmem-filter",
-    "email": "directrix1+obsshmemfilter@gmail.com",
+    "website": "https://github.com/directrix1/obs-shmem-ringbuffer",
+    "email": "directrix1+obsshmemringbuffer@gmail.com",
     "uuids": {
         "windowsApp": "a19745c8-2c39-4693-8849-4cf4020d215c",
         "macosPackage": "6156bd0c-005f-4250-a093-3837079cba12",

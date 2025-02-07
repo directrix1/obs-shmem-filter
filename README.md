@@ -1,34 +1,51 @@
-# OBS Plugin Template
+# OBS Shared-memory Ring Buffer Tools
 
 ## Introduction
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+This plugin is intended to provide tools to utilize the [shm_ringbuffers library](https://github.com/directrix1/shm_ringbuffers) as a conduit for simple interprocess video data sharing. This is currently enabled by the SRB Filter which outputs the video frames from the scene on which it is applied to the specified ringbuffer in RGBA format. This plugin only works on the platforms which **shm_ringbuffers** work on.
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+## Prerequisites
 
-## Set Up
+This plugin requires OBS development libraries, headers, dependencies to be installed in the usual locations and shm_ringbuffers to be installed in a place accessible by pkg-config (probably /usr) .
 
-The plugin project is set up using the included `buildspec.json` file. The following fields should be customized for an actual plugin:
+## Building
 
-* `name`: The plugin name
-* `version`: The plugin version
-* `author`: Actual name or nickname of the plugin's author
-* `website`: URL of a website associated with the plugin
-* `email`: Contact email address associated with the plugin
-* `uuids`
-    * `macosPackage`: Unique (**!**) identifier for the macOS plugin package
-    * `macosInstaller`: Unique (**!**) identifier for the macOS plugin installer
-    * `windowsApp`: Unique (**!**) identifier for the Windows plugin installer
+### Acquire the code
 
-These values are read and processed automatically by the CMake build scripts, so no further adjustments in other files are needed.
+    git clone https://github.com/directrix1/obs-shmem-ringbuffer.git
+    cd obs-shmem-ringbuffer
 
-### Platform Configuration
+### Find your build preset
 
-Platform-specific settings are set up in the `platformConfig` section of the buildspec file:
+    cmake --list-presets
 
-* `bundleId`: macOS bundle identifier for the plugin. Should be unique and follow reverse domain name notation.
+... let's assume we're gonna select 'linux-x86_64' ...
+
+### Create build environment
+
+    cmake --preset=linux-x86_64 --install-prefix=/usr
+
+... in this case creates "build_x86_64/" folder ...
+
+### Enter build environment and build
+
+    cd build_x86_64
+    ninja
+
+### Install to system
+
+    sudo ninja install
+    
+## Usage
+
+The filter will be installed and is usable on indivual scenes. Add it to the scene, specify the hosted shared memory location and the ring buffer to send the video data to.
+
+## License
+
+This software is copyright (c) 2025 Edward Andrew Flick under GNU GPLv2 license.
+To build 
+
+## Additional Build Help
 
 ### Set Up Build Dependencies
 
@@ -112,61 +129,3 @@ To create a build configuration, `cmake` needs to be installed on the system. Th
     * Enables compile warnings as error
 
 Presets can be either specified on the command line (`cmake --preset <PRESET>`) or via the associated select field in the CMake Windows GUI. Only presets appropriate for the current build host are available for selection.
-
-Additional build system options are available to developers:
-
-* `ENABLE_CCACHE`: Enables support for compilation speed-ups via ccache (enabled by default on macOS and Linux)
-* `ENABLE_FRONTEND_API`: Adds OBS Frontend API support for interactions with OBS Studio frontend functionality (disabled by default)
-* `ENABLE_QT`: Adds Qt6 support for custom user interface elements (disabled by default)
-* `CODESIGN_IDENTITY`: Name of the Apple Developer certificate that should be used for code signing
-* `CODESIGN_TEAM`: Apple Developer team ID that should be used for code signing
-
-## GitHub Actions & CI
-
-Default GitHub Actions workflows are available for the following repository actions:
-
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
-
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
-
-### Retrieving build artifacts
-
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Plugins released for macOS should be codesigned and notarized with a valid Apple Developer ID for best user experience. To set this up, the private and personal key of a **paid Apple Developer ID** need to be downloaded from the Apple Developer portal:
-
-* On your Apple Developer dashboard, go to "Certificates, IDs & Profiles" and create two signing certificates:
-    * One of the "Developer ID Application" type. It will be used to sign the plugin's binaries
-    * One of the "Developer ID Installer" type. It will be used to sign the plugin's installer
-
-The developer certificate will usually carry a name similar in form to
-
-`Developer ID Application: <FIRSTNAME> <LASTNAME> (<LETTERS_AND_NUMBERS>)`
-
-This entire string should be specified as `CODESIGN_IDENTITY`, the `LETTERS_AND_NUMBERS` part as `CODESIGN_TEAM` to CMake to set up codesigning properly.
-
-### GitHub Actions Set Up
-
-To use code signing on GitHub Actions, the certificate and associated information need to be set up as _repository secrets_ in the GitHub repository's settings.
-
-* First, the locally stored developer certificate needs to be exported from the macOS keychain:
-    * Using the Keychain app on macOS, export these your certificates (Application and Installer) public _and_ private keys into a single .p12 file **protected with a strong password**
-    * Encode the .p12 file into its base64 representation by running `base64 <NAME_OF_YOUR_P12_FILE>`
-* Next, the certificate data and the password used to export it need to be set up as repository secrets:
-    * `MACOS_SIGNING_APPLICATION_IDENTITY`: Name of the "Developer ID Application" signing certificate
-    * `MACOS_SIGNING_INSTALLER_IDENTITY`: Name of "Developer ID Installer" signing certificate
-    * `MACOS_SIGNING_CERT`: The base64 encoded `.p12` file
-    * `MACOS_SIGNING_CERT_PASSWORD`: Password used to generate the .p12 certificate
-* To also enable notarization on GitHub Action runners, the following repository secrets are required:
-    * `MACOS_NOTARIZATION_USERNAME`: Your Apple Developer account's _Apple ID_
-    * `MACOS_NOTARIZATION_PASSWORD`: Your Apple Developer account's _generated app password_
