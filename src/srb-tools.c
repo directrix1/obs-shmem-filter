@@ -259,9 +259,10 @@ static void srb_filter_tick(void *data, float seconds)
 				obs_log(LOG_ERROR, "Could not get video info!");
 				return;
 			}
-			// Not using this render anyway
-			ovi.base_width = ovi.output_width = 2;
-			ovi.base_height = ovi.output_height = 2;
+			ovi.base_width = ovi.output_width =
+				obs_source_get_base_width(d->parent);
+			ovi.base_height = ovi.output_height =
+				obs_source_get_base_height(d->parent);
 
 			// ovi.base_width = ovi.output_width =
 			// 	obs_source_get_base_width(d->parent);
